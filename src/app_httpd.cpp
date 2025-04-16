@@ -75,6 +75,10 @@ bool isRecording = false;
 File videoFile;
 const char *videoFilePath = "/video.mjpeg";
 unsigned long recordingStartTime = 0;
+String currentRecordingPath = "";
+size_t currentRecordingSize = 0;
+int currentFrameCount = 0;
+float currentFps = 0.0;
 
 static TaskHandle_t recordTaskHandle = NULL;
 
@@ -88,122 +92,594 @@ int minFrameTimeMs = 1000 / targetFPS; // Minimum time between frames in millise
 // HTML page with recording controls
 static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <title>ESP32-S3-CAM Recording Control</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ESP32-S3-EYE 运动相机控制</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; text-align: center; }
-        .button {
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2ecc71;
+            --danger-color: #e74c3c;
+            --dark-color: #2c3e50;
+            --light-color: #ecf0f1;
+            --border-radius: 8px;
+            --box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f9f9f9;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: var(--dark-color);
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 20px;
+            transition: transform 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--dark-color);
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn {
             display: inline-block;
-            padding: 15px 30px;
-            font-size: 24px;
-            cursor: pointer;
+            padding: 12px 24px;
+            font-size: 1rem;
+            font-weight: bold;
             text-align: center;
             text-decoration: none;
-            outline: none;
-            color: #fff;
+            cursor: pointer;
             border: none;
-            border-radius: 10px;
-            box-shadow: 0 5px #999;
-            margin: 10px;
+            border-radius: var(--border-radius);
+            transition: all 0.3s ease;
+            box-shadow: var(--box-shadow);
+            color: white;
         }
-        .start { background-color: #4CAF50; }
-        .start:hover { background-color: #3e8e41; }
-        .stop { background-color: #f44336; }
-        .stop:hover { background-color: #da190b; }
-        .button:active { box-shadow: 0 2px #666; transform: translateY(4px); }
-        .stream {
-            margin-top: 20px;
-            max-width: 100%;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 5px;
+        .btn-primary {
+            background-color: var(--primary-color);
         }
-        #status {
-            margin-top: 20px;
-            padding: 10px;
+        .btn-primary:hover {
+            background-color: #2980b9;
+        }
+        .btn-success {
+            background-color: var(--secondary-color);
+        }
+        .btn-success:hover {
+            background-color: #27ae60;
+        }
+        .btn-danger {
+            background-color: var(--danger-color);
+        }
+        .btn-danger:hover {
+            background-color: #c0392b;
+        }
+        .btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 3px rgba(0, 0, 0, 0.1);
+        }
+        .status {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            background-color: var(--light-color);
+            margin-top: 10px;
+        }
+        .status-recording {
+            background-color: #ffeaa7;
+            color: #d35400;
+        }
+        .status-stopped {
+            background-color: #dfe6e9;
+            color: #636e72;
+        }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .setting-label {
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+        }
+        .setting-value {
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        .slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
             border-radius: 5px;
-            background-color: #eee;
+            background: #d3d3d3;
+            outline: none;
+        }
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            cursor: pointer;
+        }
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            cursor: pointer;
+        }
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .toggle-slider {
+            background-color: var(--secondary-color);
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(26px);
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            background-color: var(--dark-color);
+            color: white;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            opacity: 0;
+            transform: translateY(-20px);
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+        .notification.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .stream-container {
+            position: relative;
+            width: 100%;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--box-shadow);
+        }
+        .stream-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .stream-overlay {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        .stats {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .stat-item {
+            background-color: var(--light-color);
+            padding: 8px 12px;
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+        }
+        .recording-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 12px;
+            background-color: var(--light-color);
+            border-radius: var(--border-radius);
+            font-size: 0.9rem;
+        }
+        .stat-label {
+            font-weight: bold;
+            color: var(--dark-color);
+        }
+        .stat-value {
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        @media (max-width: 768px) {
+            .container {
+                gap: 15px;
+            }
+            .card {
+                padding: 15px;
+            }
+            .btn {
+                padding: 10px 20px;
+                font-size: 0.9rem;
+            }
+            h1 {
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
-    <h1>ESP32-S3-CAM Control</h1>
-    <div>
-        <a href="/record?action=start" class="button start">Start Recording</a>
-        <a href="/record?action=stop" class="button stop">Stop Recording</a>
-    </div>
-    <div id="status">Status: Ready</div>
+    <header>
+        <h1>ESP32-S3 运动相机</h1>
+    </header>
 
-    <div style="margin: 20px 0;">
-        <label for="fps">FPS: </label>
-        <select id="fps" onchange="setFPS(this.value)">
-            <option value="10">10 FPS</option>
-            <option value="15">15 FPS</option>
-            <option value="20">20 FPS</option>
-            <option value="25">25 FPS</option>
-            <option value="30" selected>30 FPS</option>
-            <option value="60">60 FPS</option>
-        </select>
-        <span id="fpsStatus"></span>
+    <div class="container">
+        <!-- 视频流卡片 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">实时预览</div>
+                <div id="status" class="status status-stopped">准备就绪</div>
+            </div>
+            <div class="stream-container">
+                <img src="/stream" alt="Camera Stream" id="stream">
+                <div class="stream-overlay" id="fps-display">30 FPS</div>
+            </div>
+            <div class="stats" id="stats">
+                <div class="stat-item">分辨率: <span id="resolution">HD</span></div>
+                <div class="stat-item">质量: <span id="quality">高</span></div>
+            </div>
+        </div>
+
+        <!-- 录制控制卡片 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">录制控制</div>
+            </div>
+            <div class="controls">
+                <button id="startBtn" class="btn btn-success">开始录制</button>
+                <button id="stopBtn" class="btn btn-danger">停止录制</button>
+            </div>
+
+            <!-- 录制信息显示区 -->
+            <div id="recording-info" class="recording-info" style="display: none; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+                <h3 style="font-size: 1.1rem; margin-bottom: 10px;">当前录制信息</h3>
+                <div class="recording-stats">
+                    <div class="stat-row">
+                        <span class="stat-label">文件名：</span>
+                        <span id="rec-filename" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">录制时长：</span>
+                        <span id="rec-duration" class="stat-value">00:00:00</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">文件大小：</span>
+                        <span id="rec-size" class="stat-value">0 KB</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">帧数：</span>
+                        <span id="rec-frames" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">实时帧率：</span>
+                        <span id="rec-fps" class="stat-value">0 FPS</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置卡片 -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">相机设置</div>
+            </div>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <span>帧率 (FPS)</span>
+                        <span class="setting-value" id="fps-value">30</span>
+                    </div>
+                    <input type="range" min="5" max="60" value="30" class="slider" id="fps-slider">
+                </div>
+
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <span>陀螺仪数据</span>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="mpu-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div class="stream">
-        <img src="/stream" width="640" height="480" />
-    </div>
+    <div id="notification" class="notification"></div>
 
     <script>
-        // Simple function to update status
-        async function checkStatus() {
-            const response = await fetch('/record');
-            const status = await response.text();
-            document.getElementById('status').innerText = status;
+        // DOM元素
+        const statusEl = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const fpsSlider = document.getElementById('fps-slider');
+        const fpsValue = document.getElementById('fps-value');
+        const fpsDisplay = document.getElementById('fps-display');
+        const mpuToggle = document.getElementById('mpu-toggle');
+        const notificationEl = document.getElementById('notification');
+
+        // 录制信息元素
+        const recordingInfoEl = document.getElementById('recording-info');
+        const recFilenameEl = document.getElementById('rec-filename');
+        const recDurationEl = document.getElementById('rec-duration');
+        const recSizeEl = document.getElementById('rec-size');
+        const recFramesEl = document.getElementById('rec-frames');
+        const recFpsEl = document.getElementById('rec-fps');
+
+        // 显示通知
+        function showNotification(message, duration = 3000) {
+            notificationEl.textContent = message;
+            notificationEl.classList.add('show');
+
+            setTimeout(() => {
+                notificationEl.classList.remove('show');
+            }, duration);
         }
 
-        // Function to set FPS
+        // 格式化时间为 HH:MM:SS
+        function formatTime(seconds) {
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // 获取录制统计信息
+        async function fetchRecordingStats() {
+            try {
+                const response = await fetch('/recording_stats');
+                const data = await response.json();
+
+                if (data.recording) {
+                    // 显示录制信息区域
+                    recordingInfoEl.style.display = 'block';
+
+                    // 更新各项统计信息
+                    recFilenameEl.textContent = data.filename || '-';
+                    recDurationEl.textContent = formatTime(data.duration);
+                    recSizeEl.textContent = data.size;
+                    recFramesEl.textContent = data.frames;
+                    recFpsEl.textContent = `${data.fps.toFixed(1)} FPS`;
+                } else {
+                    // 隐藏录制信息区域
+                    recordingInfoEl.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error fetching recording stats:', error);
+            }
+        }
+
+        // 更新录制状态
+        async function updateStatus() {
+            try {
+                const response = await fetch('/record');
+                const statusText = await response.text();
+
+                if (statusText.includes('Recording')) {
+                    statusEl.textContent = '正在录制';
+                    statusEl.className = 'status status-recording';
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+
+                    // 获取录制统计信息
+                    await fetchRecordingStats();
+                } else {
+                    statusEl.textContent = '准备就绪';
+                    statusEl.className = 'status status-stopped';
+                    startBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    recordingInfoEl.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+
+        // 开始录制
+        async function startRecording() {
+            try {
+                const response = await fetch('/record?action=start');
+                const result = await response.text();
+                showNotification(result.includes('started') ? '录制已开始' : result);
+                updateStatus();
+            } catch (error) {
+                showNotification('开始录制失败');
+                console.error('Error starting recording:', error);
+            }
+        }
+
+        // 停止录制
+        async function stopRecording() {
+            try {
+                const response = await fetch('/record?action=stop');
+                const result = await response.text();
+                showNotification(result.includes('stopped') ? '录制已停止' : result);
+                updateStatus();
+            } catch (error) {
+                showNotification('停止录制失败');
+                console.error('Error stopping recording:', error);
+            }
+        }
+
+        // 设置FPS
         async function setFPS(fps) {
-            const fpsStatus = document.getElementById('fpsStatus');
-            fpsStatus.innerText = 'Setting...';
+            fpsValue.textContent = fps;
+            fpsDisplay.textContent = `${fps} FPS`;
 
             try {
                 const response = await fetch(`/fps?value=${fps}`);
                 const result = await response.text();
-                fpsStatus.innerText = result;
-
-                // Clear the status after 3 seconds
-                setTimeout(() => {
-                    fpsStatus.innerText = '';
-                }, 3000);
+                if (result.includes('updated')) {
+                    showNotification(`帧率已设置为 ${fps} FPS`);
+                }
             } catch (error) {
-                fpsStatus.innerText = 'Error setting FPS';
+                showNotification('设置帧率失败');
+                console.error('Error setting FPS:', error);
             }
         }
 
-        // Check current FPS on load
+        // 切换MPU状态
+        async function toggleMPU(enabled) {
+            try {
+                const response = await fetch(`/mpu_toggle?enable=${enabled ? 1 : 0}`);
+                const result = await response.text();
+                showNotification(enabled ? '陀螺仪数据已启用' : '陀螺仪数据已禁用');
+            } catch (error) {
+                showNotification('切换陀螺仪状态失败');
+                console.error('Error toggling MPU:', error);
+            }
+        }
+
+        // 获取当前FPS
         async function getCurrentFPS() {
             try {
                 const response = await fetch('/fps');
                 const result = await response.text();
-                // Extract the number from "Current FPS: XX"
                 const fpsMatch = result.match(/\d+/);
                 if (fpsMatch) {
                     const currentFps = fpsMatch[0];
-                    document.getElementById('fps').value = currentFps;
+                    fpsSlider.value = currentFps;
+                    fpsValue.textContent = currentFps;
+                    fpsDisplay.textContent = `${currentFps} FPS`;
                 }
             } catch (error) {
                 console.error('Error getting current FPS:', error);
             }
         }
 
-        // Check status and FPS on load
-        window.onload = function() {
-            checkStatus();
-            getCurrentFPS();
-        };
+        // 获取MPU状态
+        async function getMPUStatus() {
+            try {
+                const response = await fetch('/mpu_toggle');
+                const result = await response.text();
+                mpuToggle.checked = result.includes('ON');
+            } catch (error) {
+                console.error('Error getting MPU status:', error);
+            }
+        }
 
-        // Update status periodically
-        setInterval(checkStatus, 5000);
+        // 事件监听器
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+
+        fpsSlider.addEventListener('input', function() {
+            fpsValue.textContent = this.value;
+        });
+
+        fpsSlider.addEventListener('change', function() {
+            setFPS(this.value);
+        });
+
+        mpuToggle.addEventListener('change', function() {
+            toggleMPU(this.checked);
+        });
+
+        // 初始化
+        window.addEventListener('load', async function() {
+            await updateStatus();
+            await getCurrentFPS();
+            await getMPUStatus();
+        });
+
+        // 定期更新状态
+        setInterval(updateStatus, 5000);
+
+        // 当录制时，更频繁地更新录制统计信息
+        setInterval(async () => {
+            if (statusEl.textContent === '正在录制') {
+                await fetchRecordingStats();
+            }
+        }, 1000);
     </script>
 </body>
 </html>
@@ -449,12 +925,14 @@ void recordTask(void *param) {
             }
 
             totalFrameCount++;
+            currentFrameCount = totalFrameCount; // Update global frame count
             lastFpsFrameCount++;
             esp_camera_fb_return(fb);
 
             // 输出每秒帧率
             unsigned long nowFpsMillis = millis();
             if (nowFpsMillis - lastFpsMillis >= 1000) {
+                currentFps = lastFpsFrameCount; // Update global FPS counter
                 Serial.printf("[I] FPS: %d\n", lastFpsFrameCount);
                 lastFpsFrameCount = 0;
                 lastFpsMillis = nowFpsMillis;
@@ -469,6 +947,8 @@ void recordTask(void *param) {
                     buffer_used = 0;
                 }
                 videoFile.flush();
+                // Update current recording size
+                currentRecordingSize = videoFile.size();
                 last_flush = now;
             }
         }
@@ -531,6 +1011,7 @@ static esp_err_t record_handler(httpd_req_t *req)
 
                     // Generate a unique file path
                     String uniqueFilePath = generateUniqueFilePath(videoFilePath);
+                    currentRecordingPath = uniqueFilePath; // Store current recording path
 
                     // Start recording
                     videoFile = SD_MMC.open(uniqueFilePath.c_str(), FILE_WRITE);
@@ -538,6 +1019,9 @@ static esp_err_t record_handler(httpd_req_t *req)
                     {
                         isRecording = true;
                         recordingStartTime = millis();
+                        currentFrameCount = 0;
+                        currentRecordingSize = 0;
+                        currentFps = 0.0;
                         Serial.printf("[I] Started recording to %s\n", uniqueFilePath.c_str());
                         Serial.printf("Started recording to %s\r\n", uniqueFilePath.c_str()); // Added for serial output
                         xTaskCreatePinnedToCore(recordTask, "recordTask", 4096, NULL, 1, &recordTaskHandle, 1);
@@ -682,6 +1166,48 @@ static esp_err_t fps_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// Handler for getting recording statistics
+static esp_err_t recording_stats_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    char json_response[256];
+
+    if (isRecording) {
+        // Calculate recording duration in seconds
+        unsigned long duration = (millis() - recordingStartTime) / 1000;
+
+        // Format file size to human-readable format
+        char size_str[32];
+        if (currentRecordingSize < 1024) {
+            snprintf(size_str, sizeof(size_str), "%u B", (unsigned int)currentRecordingSize);
+        } else if (currentRecordingSize < 1024 * 1024) {
+            snprintf(size_str, sizeof(size_str), "%.1f KB", currentRecordingSize / 1024.0);
+        } else {
+            snprintf(size_str, sizeof(size_str), "%.2f MB", currentRecordingSize / (1024.0 * 1024.0));
+        }
+
+        // Extract filename from path
+        const char* filename = strrchr(currentRecordingPath.c_str(), '/');
+        if (filename) {
+            filename++; // Skip the slash
+        } else {
+            filename = currentRecordingPath.c_str();
+        }
+
+        // Create JSON response
+        snprintf(json_response, sizeof(json_response),
+                 "{\"recording\":true,\"duration\":%lu,\"frames\":%d,\"fps\":%.1f,\"size\":\"%s\",\"filename\":\"%s\"}",
+                 duration, currentFrameCount, currentFps, size_str, filename);
+    } else {
+        // Not recording
+        snprintf(json_response, sizeof(json_response), "{\"recording\":false}");
+    }
+
+    return httpd_resp_sendstr(req, json_response);
+}
+
 
 void startCameraServer()
 {
@@ -765,6 +1291,13 @@ void startCameraServer()
         .user_ctx = NULL
     };
 
+    httpd_uri_t stats_uri = {
+        .uri = "/recording_stats",
+        .method = HTTP_GET,
+        .handler = recording_stats_handler,
+        .user_ctx = NULL
+    };
+
     ra_filter_init(&ra_filter, 20);
 
     // Set initial FPS
@@ -778,6 +1311,7 @@ void startCameraServer()
         httpd_register_uri_handler(camera_httpd, &record_uri); // Register record handler
         httpd_register_uri_handler(camera_httpd, &mpu_toggle_uri); // Register MPU control handler
         httpd_register_uri_handler(camera_httpd, &fps_uri); // Register FPS control handler
+        httpd_register_uri_handler(camera_httpd, &stats_uri); // Register recording stats handler
         Serial.printf("[I] Camera server started successfully\n");
     } else {
         Serial.printf("[E] Failed to start camera server\n");
