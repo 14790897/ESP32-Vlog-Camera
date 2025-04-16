@@ -477,16 +477,16 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
                     <input type="range" min="5" max="60" value="10" class="slider" id="fps-slider">
                 </div>
 
-                // <div class="setting-item">
-                //     <div class="setting-label">
-                //         <span>陀螺仪数据</span>
-                //     </div>
-                //     <label class="toggle-switch">
-                //         <input type="checkbox" id="mpu-toggle">
-                //         <span class="toggle-slider"></span>
-                //     </label>
-                // </div>
-            </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <span>陀螺仪数据</span>                //     </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="mpu-toggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                       </div>
+                    </div>
+
         </div>
     </div>
 
@@ -924,6 +924,7 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             }
         }
 
+
         // 事件监听器
         startBtn.addEventListener('click', startRecording);
         stopBtn.addEventListener('click', stopRecording);
@@ -939,6 +940,8 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
         mpuToggle.addEventListener('change', function() {
             toggleMPU(this.checked);
         });
+
+
 
         // 初始化
         window.addEventListener('load', async function() {
@@ -1514,6 +1517,8 @@ static esp_err_t fps_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+
 // Handler for stopping the stream
 static esp_err_t stop_stream_handler(httpd_req_t *req)
 {
@@ -1748,6 +1753,8 @@ void startCameraServer()
         .handler = fps_handler,
         .user_ctx = NULL
     };
+
+
 
     httpd_uri_t stats_uri = {
         .uri = "/recording_stats",
