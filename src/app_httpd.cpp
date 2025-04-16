@@ -54,7 +54,7 @@ typedef struct
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char *_STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char *_STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
-static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\nX-Timestamp: %d.%06d\r\nX-IMU-Data: %f,%f,%f,%f,%f,%f\r\n\r\n";
+static const char *_STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\nX-Timestamp: %d.%06d\r\n\r\n";
 
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
@@ -338,6 +338,20 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             border-radius: 4px;
             font-size: 0.9rem;
         }
+        .stream-status {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 1rem;
+            text-align: center;
+            max-width: 80%;
+            display: none;
+        }
         .stats {
             display: flex;
             flex-wrap: wrap;
@@ -401,8 +415,9 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
                 <div id="status" class="status status-stopped">准备就绪</div>
             </div>
             <div class="stream-container">
-                <img src="/stream" alt="Camera Stream" id="stream">
+                <canvas id="stream-canvas" width="640" height="480"></canvas>
                 <div class="stream-overlay" id="fps-display">30 FPS</div>
+                <div id="stream-status" class="stream-status"></div>
             </div>
             <div class="stats" id="stats">
                 <div class="stat-item">分辨率: <span id="resolution">HD</span></div>
@@ -487,6 +502,8 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
         const fpsDisplay = document.getElementById('fps-display');
         const mpuToggle = document.getElementById('mpu-toggle');
         const notificationEl = document.getElementById('notification');
+        const streamCanvas = document.getElementById('stream-canvas');
+        const streamStatus = document.getElementById('stream-status');
 
         // 录制信息元素
         const recordingInfoEl = document.getElementById('recording-info');
@@ -495,6 +512,127 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
         const recSizeEl = document.getElementById('rec-size');
         const recFramesEl = document.getElementById('rec-frames');
         const recFpsEl = document.getElementById('rec-fps');
+
+        // 流媒体变量
+        let streamActive = false;
+        let mjpegStream = null;
+        let lastFrameTime = 0;
+        let frameCount = 0;
+        let streamFps = 0;
+        let streamInterval = null;
+
+        // 初始化Canvas
+        const ctx = streamCanvas.getContext('2d');
+        ctx.fillStyle = '#f0f0f0';
+        ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
+        ctx.fillStyle = '#666';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('点击开始流媒体', streamCanvas.width / 2, streamCanvas.height / 2);
+
+        // 显示流媒体状态
+        function showStreamStatus(message, isError = false) {
+            if (message) {
+                streamStatus.textContent = message;
+                streamStatus.style.display = 'block';
+                streamStatus.style.backgroundColor = isError ? 'rgba(220, 53, 69, 0.7)' : 'rgba(0, 0, 0, 0.7)';
+            } else {
+                streamStatus.style.display = 'none';
+            }
+        }
+
+        // 启动流媒体
+        function startStream() {
+            // 检查是否正在录制
+            if (statusEl.textContent === '正在录制') {
+                showStreamStatus('无法在录制时播放流媒体', true);
+                showNotification('无法在录制时流媒体播放', 5000);
+                return;
+            }
+
+            if (streamActive) return;
+
+            showStreamStatus('正在连接...');
+
+            // 创建新的Image对象用于加载MJPEG流
+            const img = new Image();
+            img.onload = function() {
+                // 第一帧加载成功，隐藏状态消息
+                showStreamStatus(null);
+                streamActive = true;
+            };
+
+            img.onerror = function() {
+                showStreamStatus('流媒体加载失败', true);
+                showNotification('流媒体加载失败', 5000);
+                stopStream();
+            };
+
+            // 使用时间戳防止缓存
+            img.src = '/stream?t=' + new Date().getTime();
+            mjpegStream = img;
+
+            // 设置定时器来更新Canvas
+            streamInterval = setInterval(updateCanvas, 30); // 约33fps的更新率
+
+            // 计算FPS
+            setInterval(calculateStreamFps, 1000);
+        }
+
+        // 停止流媒体
+        function stopStream() {
+            if (!streamActive) return;
+
+            clearInterval(streamInterval);
+            streamActive = false;
+            mjpegStream = null;
+
+            // 重置Canvas
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('点击开始流媒体', streamCanvas.width / 2, streamCanvas.height / 2);
+
+            showNotification('流媒体已停止');
+        }
+
+        // 更新Canvas
+        function updateCanvas() {
+            if (!streamActive || !mjpegStream) return;
+
+            try {
+                ctx.drawImage(mjpegStream, 0, 0, streamCanvas.width, streamCanvas.height);
+                frameCount++;
+                lastFrameTime = performance.now();
+            } catch (e) {
+                console.error('Canvas更新错误:', e);
+            }
+        }
+
+        // 计算流媒体FPS
+        function calculateStreamFps() {
+            if (!streamActive) {
+                streamFps = 0;
+                return;
+            }
+
+            streamFps = frameCount;
+            frameCount = 0;
+            fpsDisplay.textContent = `${streamFps} FPS`;
+        }
+
+        // 点击Canvas开始/停止流媒体
+        streamCanvas.addEventListener('click', function() {
+            if (streamActive) {
+                stopStream();
+            } else {
+                startStream();
+            }
+        });
 
         // 显示通知
         function showNotification(message, duration = 3000) {
@@ -551,6 +689,12 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
                     startBtn.disabled = true;
                     stopBtn.disabled = false;
 
+                    // 如果流媒体正在播放，停止它
+                    if (streamActive) {
+                        stopStream();
+                        showStreamStatus('录制进行中，无法播放流媒体', true);
+                    }
+
                     // 获取录制统计信息
                     await fetchRecordingStats();
                 } else {
@@ -568,9 +712,23 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
         // 开始录制
         async function startRecording() {
             try {
+                // 如果流媒体正在播放，停止它
+                if (streamActive) {
+                    stopStream();
+                    showStreamStatus('录制进行中，无法播放流媒体', true);
+                }
+
                 const response = await fetch('/record?action=start');
                 const result = await response.text();
-                showNotification(result.includes('started') ? '录制已开始' : result);
+
+                if (result.includes('started')) {
+                    showNotification('录制已开始');
+                } else if (result.includes('streaming')) {
+                    showNotification('无法在流媒体播放时录制', 5000);
+                } else {
+                    showNotification(result);
+                }
+
                 updateStatus();
             } catch (error) {
                 showNotification('开始录制失败');
@@ -669,6 +827,12 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             await updateStatus();
             await getCurrentFPS();
             await getMPUStatus();
+
+            // 如果没有录制，自动启动流媒体
+            if (statusEl.textContent !== '正在录制') {
+                // 稍微延迟启动流媒体，确保其他初始化完成
+                setTimeout(startStream, 500);
+            }
         });
 
         // 定期更新状态
@@ -1009,6 +1173,16 @@ static esp_err_t record_handler(httpd_req_t *req)
                         return ESP_OK;
                     }
 
+                    // Check if streaming is active
+                    if (isStreaming)
+                    {
+                        Serial.printf("[I] Cannot record while streaming is active\n");
+                        httpd_resp_set_type(req, "text/plain");
+                        httpd_resp_sendstr(req, "Cannot record while streaming is active");
+                        free(buf);
+                        return ESP_OK;
+                    }
+
                     // Generate a unique file path
                     String uniqueFilePath = generateUniqueFilePath(videoFilePath);
                     currentRecordingPath = uniqueFilePath; // Store current recording path
@@ -1166,6 +1340,162 @@ static esp_err_t fps_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+// Stream handler for MJPEG streaming
+static esp_err_t stream_handler(httpd_req_t *req)
+{
+    camera_fb_t *fb = NULL;
+    esp_err_t res = ESP_OK;
+    size_t _jpg_buf_len = 0;
+    uint8_t *_jpg_buf = NULL;
+    char part_buf[128];
+
+    // Check if recording is in progress
+    if (isRecording)
+    {
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_sendstr(req, "Cannot stream while recording is in progress");
+        return ESP_OK;
+    }
+
+    // Set streaming flag
+    isStreaming = true;
+    Serial.println("Stream started");
+
+    // Set response type
+    res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
+    if (res != ESP_OK)
+    {
+        isStreaming = false;
+        return res;
+    }
+
+    // Set no cache headers
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
+
+    // Main streaming loop
+    while (true)
+    {
+        // Check if recording has started (should stop streaming)
+        if (isRecording)
+        {
+            Serial.println("Recording started, stopping stream");
+            res = ESP_OK;
+            break;
+        }
+
+        // Get frame from camera
+        fb = esp_camera_fb_get();
+        if (!fb)
+        {
+            Serial.println("Camera capture failed");
+            res = ESP_FAIL;
+            break;
+        }
+
+        // If format is not JPEG, convert it
+        if (fb->format != PIXFORMAT_JPEG)
+        {
+            bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
+            esp_camera_fb_return(fb);
+            fb = NULL;
+
+            if (!jpeg_converted)
+            {
+                Serial.println("JPEG compression failed");
+                res = ESP_FAIL;
+                break;
+            }
+        }
+        else
+        {
+            _jpg_buf_len = fb->len;
+            _jpg_buf = fb->buf;
+        }
+
+        // Get MPU data if enabled
+        MPUData mpu_data = {};
+        if (enableMPU)
+        {
+            readMPUData();
+            mpu_data = getMPUData();
+        }
+
+        // Get current time for timestamp
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+
+        // Format the multipart header with timestamp and IMU data
+        snprintf(part_buf, 128, _STREAM_PART, _jpg_buf_len, tv.tv_sec, tv.tv_usec);
+
+        // Send multipart boundary and header
+        res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+        if (res != ESP_OK)
+        {
+            break;
+        }
+
+        res = httpd_resp_send_chunk(req, (const char *)part_buf, strlen((const char *)part_buf));
+        if (res != ESP_OK)
+        {
+            break;
+        }
+
+        // Send the JPEG image data
+        res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
+        if (res != ESP_OK)
+        {
+            break;
+        }
+
+        // Clean up
+        if (fb)
+        {
+            esp_camera_fb_return(fb);
+            fb = NULL;
+            _jpg_buf = NULL;
+        }
+        else if (_jpg_buf)
+        {
+            free(_jpg_buf);
+            _jpg_buf = NULL;
+        }
+
+        // Add a small delay to control frame rate and prevent overwhelming the network
+        // This also helps maintain the target FPS
+        int delay_ms = minFrameTimeMs > 0 ? minFrameTimeMs : 100;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+
+        // Check for errors in previous operations which might indicate client disconnection
+        if (res != ESP_OK) {
+            Serial.println("Client may have disconnected");
+            break;
+        }
+    }
+
+    // Clean up any remaining resources
+    if (fb)
+    {
+        esp_camera_fb_return(fb);
+        fb = NULL;
+    }
+
+    if (_jpg_buf)
+    {
+        free(_jpg_buf);
+        _jpg_buf = NULL;
+    }
+
+    // Reset streaming flag
+    isStreaming = false;
+    Serial.println("Stream ended");
+
+    return res;
+}
+
 // Handler for getting recording statistics
 static esp_err_t recording_stats_handler(httpd_req_t *req)
 {
@@ -1298,6 +1628,12 @@ void startCameraServer()
         .user_ctx = NULL
     };
 
+    httpd_uri_t stream_uri = {
+        .uri = "/stream",
+        .method = HTTP_GET,
+        .handler = stream_handler,
+        .user_ctx = NULL};
+
     ra_filter_init(&ra_filter, 20);
 
     // Set initial FPS
@@ -1312,6 +1648,7 @@ void startCameraServer()
         httpd_register_uri_handler(camera_httpd, &mpu_toggle_uri); // Register MPU control handler
         httpd_register_uri_handler(camera_httpd, &fps_uri); // Register FPS control handler
         httpd_register_uri_handler(camera_httpd, &stats_uri); // Register recording stats handler
+        httpd_register_uri_handler(camera_httpd, &stream_uri); // Register stream handler
         Serial.printf("[I] Camera server started successfully\n");
     } else {
         Serial.printf("[E] Failed to start camera server\n");
