@@ -477,15 +477,15 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
                     <input type="range" min="5" max="60" value="10" class="slider" id="fps-slider">
                 </div>
 
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <span>陀螺仪数据</span>
-                    </div>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="mpu-toggle">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
+                // <div class="setting-item">
+                //     <div class="setting-label">
+                //         <span>陀螺仪数据</span>
+                //     </div>
+                //     <label class="toggle-switch">
+                //         <input type="checkbox" id="mpu-toggle">
+                //         <span class="toggle-slider"></span>
+                //     </label>
+                // </div>
             </div>
         </div>
     </div>
@@ -1285,14 +1285,14 @@ void recordTask(void *param) {
 // Handler for starting/stopping recording
 static esp_err_t record_handler(httpd_req_t *req)
 {
-    Serial.printf("[I] Record handler called\n");
+    // Serial.printf("[I] Record handler called\n");
 
     char *buf = NULL;
     char action[32] = {0}; // Initialize to zeros
 
     // Parse query parameters
     size_t buf_len = httpd_req_get_url_query_len(req);
-    Serial.printf("[I] Query length: %d\n", buf_len);
+    // Serial.printf("[I] Query length: %d\n", buf_len);
 
     if (buf_len > 0)
     {
@@ -1570,8 +1570,8 @@ static esp_err_t stream_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Set streaming flag temporarily for this request
-    isStreaming = true;
+    // 不再使用isStreaming标志来防止并发请求
+    // 每个请求都是独立的，可以并行处理
     Serial.println("Capturing single frame");
 
     // Set response type to JPEG
@@ -1589,7 +1589,6 @@ static esp_err_t stream_handler(httpd_req_t *req)
     if (!fb)
     {
         Serial.println("Camera capture failed");
-        isStreaming = false;
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
@@ -1604,7 +1603,6 @@ static esp_err_t stream_handler(httpd_req_t *req)
         if (!jpeg_converted)
         {
             Serial.println("JPEG compression failed");
-            isStreaming = false;
             httpd_resp_send_500(req);
             return ESP_FAIL;
         }
@@ -1620,8 +1618,7 @@ static esp_err_t stream_handler(httpd_req_t *req)
         esp_camera_fb_return(fb);
     }
 
-    // Reset streaming flag
-    isStreaming = false;
+    // 单帧发送完成
     Serial.println("Single frame sent");
 
     return res;
