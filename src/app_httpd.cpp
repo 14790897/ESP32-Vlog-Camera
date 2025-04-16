@@ -323,7 +323,7 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             overflow: hidden;
             box-shadow: var(--box-shadow);
         }
-        .stream-container img {
+        .stream-container img, .stream-container canvas {
             width: 100%;
             height: auto;
             display: block;
@@ -415,7 +415,7 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
                 <div id="status" class="status status-stopped">准备就绪</div>
             </div>
             <div class="stream-container">
-                <canvas id="stream-canvas" width="640" height="480"></canvas>
+                <canvas id="stream-canvas" width="640" height="480" style="width:100%;"></canvas>
                 <div class="stream-overlay" id="fps-display">30 FPS</div>
                 <div id="stream-status" class="stream-status"></div>
             </div>
@@ -523,13 +523,39 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
 
         // 初始化Canvas
         const ctx = streamCanvas.getContext('2d');
-        ctx.fillStyle = '#f0f0f0';
-        ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
-        ctx.fillStyle = '#666';
-        ctx.font = '20px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('点击开始流媒体', streamCanvas.width / 2, streamCanvas.height / 2);
+
+        // 设置Canvas尺寸为容器宽度
+        function resizeCanvas() {
+            const container = streamCanvas.parentElement;
+            const containerWidth = container.clientWidth;
+            // 保持原始宽高比 (4:3)
+            const aspectRatio = 4/3;
+            const canvasHeight = containerWidth / aspectRatio;
+
+            // 设置画布尺寸
+            streamCanvas.width = containerWidth;
+            streamCanvas.height = canvasHeight;
+
+            // 重绘初始内容
+            drawInitialCanvas();
+        }
+
+        // 绘制初始内容
+        function drawInitialCanvas() {
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
+            ctx.fillStyle = '#666';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('点击开始流媒体', streamCanvas.width / 2, streamCanvas.height / 2);
+        }
+
+        // 初始调整尺寸
+        resizeCanvas();
+
+        // 当窗口大小变化时调整Canvas尺寸
+        window.addEventListener('resize', resizeCanvas);
 
         // 显示流媒体状态
         function showStreamStatus(message, isError = false) {
@@ -589,13 +615,7 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             mjpegStream = null;
 
             // 重置Canvas
-            ctx.fillStyle = '#f0f0f0';
-            ctx.fillRect(0, 0, streamCanvas.width, streamCanvas.height);
-            ctx.fillStyle = '#666';
-            ctx.font = '20px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('点击开始流媒体', streamCanvas.width / 2, streamCanvas.height / 2);
+            drawInitialCanvas();
 
             showNotification('流媒体已停止');
         }
@@ -605,11 +625,36 @@ static const char RECORDING_CONTROL_HTML[] = R"rawliteral(
             if (!streamActive || !mjpegStream) return;
 
             try {
-                ctx.drawImage(mjpegStream, 0, 0, streamCanvas.width, streamCanvas.height);
+                // 清除画布
+                ctx.clearRect(0, 0, streamCanvas.width, streamCanvas.height);
+
+                // 计算维持宽高比的绘制尺寸
+                const imgWidth = mjpegStream.naturalWidth || 640;
+                const imgHeight = mjpegStream.naturalHeight || 480;
+                const imgAspect = imgWidth / imgHeight;
+                const canvasAspect = streamCanvas.width / streamCanvas.height;
+
+                let drawWidth, drawHeight, offsetX = 0, offsetY = 0;
+
+                if (imgAspect > canvasAspect) {
+                    // 图像更宽，适应高度
+                    drawWidth = streamCanvas.width;
+                    drawHeight = drawWidth / imgAspect;
+                    offsetY = (streamCanvas.height - drawHeight) / 2;
+                } else {
+                    // 图像更高，适应宽度
+                    drawHeight = streamCanvas.height;
+                    drawWidth = drawHeight * imgAspect;
+                    offsetX = (streamCanvas.width - drawWidth) / 2;
+                }
+
+                // 绘制图像
+                ctx.drawImage(mjpegStream, offsetX, offsetY, drawWidth, drawHeight);
                 frameCount++;
                 lastFrameTime = performance.now();
             } catch (e) {
                 console.error('Canvas更新错误:', e);
+                console.error(e);
             }
         }
 
@@ -1120,13 +1165,38 @@ void recordTask(void *param) {
 
     // Final flush of any remaining data
     if (buffer_used > 0) {
-        videoFile.write(temp_buffer, buffer_used);
+        try {
+            Serial.printf("[I] Final flush of %d bytes\n", buffer_used);
+            videoFile.write(temp_buffer, buffer_used);
+            Serial.printf("[I] Final flush completed\n");
+        } catch (const std::exception& e) {
+            Serial.printf("[E] Exception during final flush: %s\n", e.what());
+        } catch (...) {
+            Serial.printf("[E] Unknown exception during final flush\n");
+        }
     }
-    videoFile.flush();
+
+    try {
+        Serial.printf("[I] Flushing file...\n");
+        videoFile.flush();
+        Serial.printf("[I] File flushed\n");
+    } catch (const std::exception& e) {
+        Serial.printf("[E] Exception during file flush: %s\n", e.what());
+    } catch (...) {
+        Serial.printf("[E] Unknown exception during file flush\n");
+    }
+
     Serial.printf("[I] Total frames saved: %d\n", totalFrameCount);
 
     // Free the buffer
-    free(temp_buffer);
+    if (temp_buffer) {
+        Serial.printf("[I] Freeing buffer memory\n");
+        free(temp_buffer);
+        temp_buffer = NULL;
+        Serial.printf("[I] Buffer memory freed\n");
+    }
+
+    Serial.printf("[I] Recording task completed\n");
     vTaskDelete(NULL);
 }
 
@@ -1214,13 +1284,35 @@ static esp_err_t record_handler(httpd_req_t *req)
                     Serial.printf("[I] Stopping recording\n");
                     // Stop recording
                     if (isRecording) {
+                        Serial.printf("[I] Setting isRecording to false\n");
                         isRecording = false;
-                        if (recordTaskHandle) {
-                            recordTaskHandle = NULL;
+
+                        // 等待录制任务完成 - 给任务一些时间来结束
+                        Serial.printf("[I] Waiting for recording task to finish...\n");
+                        delay(500); // 给任务一些时间来结束
+
+                        // 安全地关闭文件
+                        if (videoFile)
+                        {
+                            Serial.printf("[I] Closing video file...\n");
+                            videoFile.flush();
+                            videoFile.close();
+                            Serial.printf("[I] Video file closed\n");
                         }
-                        videoFile.close();
-                        // Verify video was recorded by checking the file size
-                        File checkFile = SD_MMC.open(videoFilePath, FILE_READ);
+
+                        // 清理任务句柄
+                        if (recordTaskHandle) {
+                            Serial.printf("[I] Deleting recording task\n");
+                            // 尝试安全地删除任务
+                            vTaskDelete(recordTaskHandle);
+                            recordTaskHandle = NULL;
+                            Serial.printf("[I] Recording task deleted\n");
+                        }
+
+                        // 验证录制的文件
+                        String filePath = currentRecordingPath; // 使用当前录制路径而不是基本路径
+                        Serial.printf("[I] Verifying recorded file: %s\n", filePath.c_str());
+                        File checkFile = SD_MMC.open(filePath.c_str(), FILE_READ);
                         if (checkFile) {
                             Serial.printf("[I] Recorded video size: %d bytes\n", checkFile.size());
                             checkFile.close();
