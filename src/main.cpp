@@ -73,10 +73,10 @@ void setup()
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
-    config.frame_size = FRAMESIZE_UXGA;   //  FRAMESIZE_UXGA
-    // config.frame_size = FRAMESIZE_QVGA; // for OV7670
-    config.pixel_format = PIXFORMAT_JPEG; // for streaming
-    // config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition or OV7670
+    // config.frame_size = FRAMESIZE_UXGA;   //  FRAMESIZE_UXGA
+    config.frame_size = FRAMESIZE_QVGA; // for OV7670
+    // config.pixel_format = PIXFORMAT_JPEG; // for streaming
+    config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition or OV7670
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = 12;
@@ -102,7 +102,7 @@ void setup()
     else
     {
         // Best option for face detection/recognition
-        config.frame_size = FRAMESIZE_240X240;
+        config.frame_size = FRAMESIZE_QVGA;
 #if CONFIG_IDF_TARGET_ESP32S3
         config.fb_count = 2;
 #endif
@@ -137,6 +137,10 @@ void setup()
     if (config.pixel_format == PIXFORMAT_JPEG)
     {
         s->set_framesize(s, FRAMESIZE_HD);
+    }
+    if (s->id.PID == OV7670_PID)
+    {
+        s->set_framesize(s, FRAMESIZE_QVGA);
     }
 
 #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
