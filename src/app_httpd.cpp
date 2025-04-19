@@ -1055,11 +1055,31 @@ static bool initSDCard()
         Serial.printf("[W] PSRAM is not initialized! Recording performance may be limited\n");
     }
 
+    // 添加软件上拉电阻
+    Serial.println("[I] Setting up SD card pins with pull-ups");
+    pinMode(SD_MMC_CLK, INPUT_PULLUP);
+    pinMode(SD_MMC_CMD, INPUT_PULLUP);
+    pinMode(SD_MMC_D0, INPUT_PULLUP);
+    delay(50); // 给一些时间让上拉电阻生效
+
     SD_MMC.setPins(SD_MMC_CLK, SD_MMC_CMD, SD_MMC_D0);
 
-    if (!SD_MMC.begin("/sdcard", true))
-    { // Use 1-bit mode for compatibility
-        Serial.printf("[E] SD Card Mount Failed\n");
+    // 尝试多次初始化SD卡
+    int retries = 3;
+    while (retries > 0)
+    {
+        if (SD_MMC.begin("/sdcard", true))
+        { // Use 1-bit mode for compatibility
+            break;
+        }
+        Serial.printf("[W] SD Card Mount Failed, retrying... (%d attempts left)\n", retries - 1);
+        delay(500);
+        retries--;
+    }
+
+    if (retries == 0)
+    {
+        Serial.printf("[E] SD Card Mount Failed after multiple attempts\n");
         return false;
     }
 
