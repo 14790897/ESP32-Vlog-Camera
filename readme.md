@@ -91,3 +91,8 @@
 本项目采用MIT许可证开源，欢迎贡献代码和提出改进建议。
 
 <!-- git submodule add https://github.com/14790897/ESP32-Vlog-Camera.git ESP32-Vlog-Camera -->
+
+
+<!-- - [ESP32-MPU6050参考](https://randomnerdtutorials.com/esp32-mpu-6050-accelerometer-gyroscope-arduino/)
+- 视频转换命令: `ffmpeg -r 5 -i video.mjpeg -vf "vflip,hflip" -c:v libx264 output.mp4` -->
+
