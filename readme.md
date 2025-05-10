@@ -95,5 +95,6 @@
 
 <!-- - [ESP32-MPU6050参考](https://randomnerdtutorials.com/esp32-mpu-6050-accelerometer-gyroscope-arduino/)
 - 视频转换命令: `ffmpeg -r 5 -i video.mjpeg -vf "vflip,hflip" -c:v libx264 output.mp4` 
-- 视频修复命令：`ffmpeg -f mjpeg -i video.mjpeg_20250510_093128.mjpeg -c copy recovered.avi`-->
+- 视频修复命令：`ffmpeg -f mjpeg -i video.mjpeg_20250510_093128.mjpeg -c copy recovered.avi
+  ffmpeg -i recovered.avi -vf "vflip,hflip" -c:v libx264 -preset veryfast -crf 23 output.mp4`-->
 <!-- 翻转参考:https://blog.csdn.net/Turn_on/article/details/105908360 -->
