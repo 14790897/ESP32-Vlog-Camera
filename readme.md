@@ -65,6 +65,7 @@
 
 ## 2. 使用说明
 
+
 ### 硬件连接
 
 待补充...
@@ -76,6 +77,19 @@
 ### 操作指南
 
 待补充...
+
+### secrets.h 文件说明
+
+项目中的 `secrets.h` 文件用于存放敏感配置信息，例如 Wi-Fi SSID 和密码。首次使用时请在 `include/secrets.h` 或 `src/secrets.h` 文件中填写如下内容：
+
+```c
+#define WIFI_SSID     "你的WiFi名称"
+#define WIFI_PASSWORD "你的WiFi密码"
+```
+
+如有其他密钥需求（如 API 密钥），可按需添加对应的宏定义。请勿将包含真实密钥的 `secrets.h` 文件上传到公共仓库。
+
+如误操作推送,可以使用`pip install git-filter-repo git filter-repo --force --path src/secrets.h --invert-paths` 删除敏感文件的提交记录。
 
 ## 3. 开发文档
 
